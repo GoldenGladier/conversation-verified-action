@@ -74,8 +74,6 @@ async def handle_verification(
 ):
     query = update.callback_query
 
-    await query.answer()
-
     action, verification_id = query.data.split(":", 2)[1:]
 
     try:
@@ -87,11 +85,6 @@ async def handle_verification(
                 source="telegram_callback",
             )
 
-            await query.edit_message_text(
-                response.message,
-                reply_markup=None,
-            )
-
         elif action == "reject":
             response = agent.reject_verification(
                 verification_id,
@@ -99,16 +92,19 @@ async def handle_verification(
                 source="telegram_callback",
             )
 
-            await query.edit_message_text(
-                response.message,
-                reply_markup=None,
-            )
-
     except ValueError as error:
 
-        await query.edit_message_text(
-            f"⚠️ No se pudo procesar la solicitud:\n{error}"
+        await query.answer(
+            f"No se pudo procesar la solicitud: {error}",
+            show_alert=True,
         )
+        return
+
+    await query.answer()
+    await query.edit_message_text(
+        response.message,
+        reply_markup=None,
+    )
 
 def create_bot() -> Application:
     application = (

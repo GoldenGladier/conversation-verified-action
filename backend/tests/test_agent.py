@@ -357,7 +357,7 @@ def test_agent_approves_with_telegram_actor_without_executing_action(
     assert response.verification_id == request.id
 
 
-def test_agent_rejects_with_telegram_actor_and_default_source():
+def test_agent_doctor_rejects_with_telegram_actor_and_default_source():
     agent = make_agent(DOCTOR_USER_ID, PATIENT_USER_ID)
     request = create_telegram_proposal(agent)
     agent.verification.record_patient_confirmation(
@@ -366,9 +366,9 @@ def test_agent_rejects_with_telegram_actor_and_default_source():
         "telegram_conversation",
     )
 
-    response = agent.reject_verification(request.id, PATIENT_USER_ID)
+    response = agent.reject_verification(request.id, DOCTOR_USER_ID)
 
     assert request.status.value == "rejected"
-    assert request.rejected_by_user_id == PATIENT_USER_ID
+    assert request.rejected_by_user_id == DOCTOR_USER_ID
     assert request.rejection_source == "telegram_callback"
     assert response.verification_id == request.id

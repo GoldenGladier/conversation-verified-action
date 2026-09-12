@@ -189,18 +189,18 @@ def test_rejection_transitions_to_rejected():
     assert rejected.rejection_source == "telegram_callback"
 
 
-def test_patient_can_reject_after_patient_confirmation():
+def test_patient_cannot_reject_after_patient_confirmation():
     service = VerificationService()
     request = patient_confirmed_request(service)
 
-    rejected = service.reject(
-        request.id,
-        PATIENT_USER_ID,
-        "telegram_callback",
-    )
+    with pytest.raises(ValueError, match="assigned doctor can cancel"):
+        service.reject(
+            request.id,
+            PATIENT_USER_ID,
+            "telegram_callback",
+        )
 
-    assert rejected.status == VerificationStatus.REJECTED
-    assert rejected.rejected_by_user_id == PATIENT_USER_ID
+    assert request.status == VerificationStatus.PATIENT_CONFIRMED
 
 
 def test_unassigned_user_cannot_reject():
@@ -217,10 +217,24 @@ def test_unassigned_user_cannot_reject_after_patient_confirmation():
     service = VerificationService()
     request = patient_confirmed_request(service)
 
-    with pytest.raises(ValueError, match="assigned doctor or patient"):
+    with pytest.raises(ValueError, match="assigned doctor can cancel"):
         service.reject(request.id, 999, "telegram_callback")
 
     assert request.status == VerificationStatus.PATIENT_CONFIRMED
+
+
+def test_patient_can_reject_while_request_is_proposed():
+    service = VerificationService()
+    request = create_request(service)
+
+    rejected = service.reject(
+        request.id,
+        PATIENT_USER_ID,
+        "telegram_conversation",
+    )
+
+    assert rejected.status == VerificationStatus.REJECTED
+    assert rejected.rejected_by_user_id == PATIENT_USER_ID
 
 
 def test_approved_request_cannot_be_approved_again():

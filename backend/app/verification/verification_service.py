@@ -163,11 +163,20 @@ class VerificationService:
                 "Approved or rejected verification requests cannot be rejected"
             )
 
-        if user_id not in {
-            request.doctor_user_id,
-            request.patient_user_id,
-        }:
-            raise ValueError("Only the assigned doctor or patient can reject")
+        if request.status == VerificationStatus.PROPOSED:
+            allowed_user_ids = {
+                request.doctor_user_id,
+                request.patient_user_id,
+            }
+            error_message = "Only the assigned doctor or patient can reject"
+        else:
+            allowed_user_ids = {request.doctor_user_id}
+            error_message = (
+                "Only the assigned doctor can cancel after patient confirmation"
+            )
+
+        if user_id not in allowed_user_ids:
+            raise ValueError(error_message)
 
         request.status = VerificationStatus.REJECTED
         request.rejected_by_user_id = user_id
