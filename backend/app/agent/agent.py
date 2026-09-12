@@ -368,11 +368,10 @@ class Agent:
             source,
         )
 
+        result = self.action_executor.execute(request)
+
         return AgentResponse(
-            message=(
-                "Cita autorizada por el doctor. "
-                "La ejecucion de la cita se conectara en la siguiente etapa."
-            ),
+            message=result,
             verification_id=request.id,
         )
 

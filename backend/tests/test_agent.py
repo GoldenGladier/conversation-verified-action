@@ -333,7 +333,7 @@ def test_confirmation_detector_receives_limited_recent_messages():
     assert recent_messages[-1].message == "Sí"
 
 
-def test_agent_approves_with_telegram_actor_without_executing_action(
+def test_agent_approves_with_telegram_actor_executes_action(
     monkeypatch,
 ):
     agent = make_agent(DOCTOR_USER_ID, PATIENT_USER_ID)
@@ -343,18 +343,22 @@ def test_agent_approves_with_telegram_actor_without_executing_action(
         PATIENT_USER_ID,
         "telegram_conversation",
     )
+    executed_with = {}
 
-    def unexpected_execution(*args, **kwargs):
-        raise AssertionError("ActionExecutor must not run")
+    def fake_execute(executed_request):
+        executed_with["request"] = executed_request
+        return "✅ Cita creada correctamente."
 
-    monkeypatch.setattr(agent.action_executor, "execute", unexpected_execution)
+    monkeypatch.setattr(agent.action_executor, "execute", fake_execute)
 
     response = agent.approve_verification(request.id, DOCTOR_USER_ID)
 
+    assert executed_with["request"] is request
     assert request.status.value == "approved"
     assert request.doctor_approved_by == DOCTOR_USER_ID
     assert request.doctor_approval_source == "telegram_callback"
     assert response.verification_id == request.id
+    assert response.message == "✅ Cita creada correctamente."
 
 
 def test_agent_doctor_rejects_with_telegram_actor_and_default_source():
