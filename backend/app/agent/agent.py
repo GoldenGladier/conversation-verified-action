@@ -9,6 +9,9 @@ from app.agent.action_executor import ActionExecutor
 from app.agent.intent_detector import IntentDetector
 from app.agent.intent_validator import IntentValidator
 from app.agent.conversation_service import ConversationService
+from app.agent.patient_confirmation_detector import (
+    PatientConfirmationDetector,
+)
 
 
 @dataclass
@@ -16,23 +19,105 @@ class AgentResponse:
     message: str
     requires_verification: bool = False
     verification_id: str | None = None
+    show_doctor_approval_controls: bool = False
 
 
 class Agent:
 
-    def __init__(self):
+    def __init__(
+        self,
+        doctor_user_id: int | None = None,
+        patient_user_id: int | None = None,
+    ):
         self.calendar = CalendarTool()
         self.verification = VerificationService()
         self.action_executor = ActionExecutor(self.calendar)
         self.intent_detector = IntentDetector()
         self.intent_validator = IntentValidator()
         self.conversations = ConversationService()
+        self.patient_confirmation_detector = PatientConfirmationDetector()
+        self.doctor_user_id = doctor_user_id
+        self.patient_user_id = patient_user_id
 
     def process_message(
         self,
         message: str,
-        conversation_id: str
+        conversation_id: str,
+        *,
+        chat_id: int | None = None,
+        sender_user_id: int | None = None,
+        sender_name: str | None = None,
     ) -> AgentResponse:
+
+        if chat_id is not None and sender_user_id is not None:
+            self.conversations.add_recent_message(
+                conversation_id,
+                sender_user_id,
+                sender_name,
+                message,
+            )
+
+            active_request = (
+                self.verification.get_proposed_request_for_chat(chat_id)
+            )
+
+            if (
+                active_request
+                and sender_user_id == active_request.patient_user_id
+            ):
+                confirmation = self.patient_confirmation_detector.detect(
+                    message,
+                    active_request,
+                    self.conversations.get_recent_messages(conversation_id),
+                    sender_role="patient",
+                )
+
+                if confirmation.decision == "confirm":
+                    request = self.verification.record_patient_confirmation(
+                        active_request.id,
+                        sender_user_id,
+                        source="telegram_conversation",
+                    )
+                    self.conversations.clear_recent_messages(
+                        conversation_id
+                    )
+                    return AgentResponse(
+                        message=(
+                            "El paciente confirmó la cita. Doctor, "
+                            "¿quieres crearla?"
+                        ),
+                        verification_id=request.id,
+                        show_doctor_approval_controls=True,
+                    )
+
+                if confirmation.decision == "reject":
+                    self.verification.reject(
+                        active_request.id,
+                        sender_user_id,
+                        source="telegram_conversation",
+                    )
+                    self.conversations.clear_recent_messages(
+                        conversation_id
+                    )
+                    return AgentResponse(
+                        message="El paciente rechazó la propuesta de cita."
+                    )
+
+                if confirmation.decision == "modify":
+                    self.verification.reject(
+                        active_request.id,
+                        sender_user_id,
+                        source="telegram_conversation",
+                    )
+                    self.conversations.clear_recent_messages(
+                        conversation_id
+                    )
+                    return AgentResponse(
+                        message=(
+                            "El paciente rechazó los términos actuales. "
+                            "El doctor debe crear una nueva propuesta."
+                        )
+                    )
 
         # 1. Check if there is an existing conversation
         current_state = self.conversations.get(
@@ -171,6 +256,41 @@ class Agent:
                 )
             )
 
+        is_telegram_context = (
+            chat_id is not None or sender_user_id is not None
+        )
+
+        if is_telegram_context:
+            if (
+                chat_id is None
+                or sender_user_id is None
+                or self.doctor_user_id is None
+                or self.patient_user_id is None
+            ):
+                return AgentResponse(
+                    message=(
+                        "Telegram role configuration is missing. "
+                        "Set DOCTOR_TELEGRAM_USER_ID and "
+                        "PATIENT_TELEGRAM_USER_ID."
+                    )
+                )
+
+            if sender_user_id != self.doctor_user_id:
+                return AgentResponse(
+                    message=(
+                        "Only the configured doctor can propose "
+                        "an appointment."
+                    )
+                )
+
+            if self.verification.get_proposed_request_for_chat(chat_id):
+                return AgentResponse(
+                    message=(
+                        "There is already an active appointment proposal "
+                        "for this chat."
+                    )
+                )
+
         # 9. All information is available.
         #    Clear the conversation state.
         self.conversations.clear(
@@ -188,7 +308,14 @@ class Agent:
                     timespec="minutes"
                 ),
                 "duration_minutes": intent.duration_minutes,
-            }
+            },
+            chat_id=chat_id,
+            doctor_user_id=(
+                self.doctor_user_id if is_telegram_context else None
+            ),
+            patient_user_id=(
+                self.patient_user_id if is_telegram_context else None
+            ),
         )
 
         # 11. Ask for approval
@@ -231,26 +358,39 @@ class Agent:
 
     def approve_verification(
         self,
-        verification_id: str
-    ):
-
-        request = self.verification.approve(
-            verification_id
+        verification_id: str,
+        actor_user_id: int,
+        source: str = "telegram_callback",
+    ) -> AgentResponse:
+        request = self.verification.approve_by_doctor(
+            verification_id,
+            actor_user_id,
+            source,
         )
 
-        result = self.action_executor.execute(
-            request
+        return AgentResponse(
+            message=(
+                "Cita autorizada por el doctor. "
+                "La ejecucion de la cita se conectara en la siguiente etapa."
+            ),
+            verification_id=request.id,
         )
-
-        return request, result
 
     def reject_verification(
         self,
-        verification_id: str
-    ):
+        verification_id: str,
+        actor_user_id: int,
+        source: str = "telegram_callback",
+    ) -> AgentResponse:
+        request = self.verification.reject(
+            verification_id,
+            actor_user_id,
+            source,
+        )
 
-        return self.verification.reject(
-            verification_id
+        return AgentResponse(
+            message="Cita cancelada.",
+            verification_id=request.id,
         )
 
     def _build_context(self, intent) -> str:

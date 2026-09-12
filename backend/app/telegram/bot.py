@@ -14,7 +14,10 @@ from telegram.ext import (
 from app.agent.agent import Agent
 from app.config import settings
 
-agent = Agent()
+agent = Agent(
+    doctor_user_id=settings.doctor_telegram_user_id,
+    patient_user_id=settings.patient_telegram_user_id,
+)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -33,19 +36,22 @@ async def handle_message(
 
     response = agent.process_message(
         message,
-        conversation_id
+        conversation_id,
+        chat_id=update.effective_chat.id,
+        sender_user_id=update.effective_user.id,
+        sender_name=update.effective_user.full_name,
     )
     
-    if response.requires_verification:
+    if response.show_doctor_approval_controls:
 
         keyboard = [
             [
                 InlineKeyboardButton(
-                    "✅ Aprobar",
+                    "Crear cita",
                     callback_data=f"verify:approve:{response.verification_id}"
                 ),
                 InlineKeyboardButton(
-                    "❌ Rechazar",
+                    "Cancelar",
                     callback_data=f"verify:reject:{response.verification_id}"
                 ),
             ]
@@ -75,22 +81,27 @@ async def handle_verification(
     try:
 
         if action == "approve":
-            request, result = agent.approve_verification(
-                verification_id
+            response = agent.approve_verification(
+                verification_id,
+                query.from_user.id,
+                source="telegram_callback",
             )
 
             await query.edit_message_text(
-                result
+                response.message,
+                reply_markup=None,
             )
 
         elif action == "reject":
-            request = agent.reject_verification(
-                verification_id
+            response = agent.reject_verification(
+                verification_id,
+                query.from_user.id,
+                source="telegram_callback",
             )
 
             await query.edit_message_text(
-                "❌ Acción rechazada.\n\n"
-                f"{request.description}"
+                response.message,
+                reply_markup=None,
             )
 
     except ValueError as error:
