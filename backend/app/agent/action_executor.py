@@ -48,10 +48,15 @@ class ActionExecutor:
             end=end
         )
 
-        return (
+        message = (
             f"✅ Cita creada correctamente.\n\n"
             f"Paciente: {patient_name}\n"
             f"Fecha: {date}\n"
             f"Hora: {start_time}\n"
             f"Duración: {duration_minutes} minutos"
         )
+
+        if event.html_link:
+            message += f"\n\nAbrir en Calendar: {event.html_link}"
+
+        return message

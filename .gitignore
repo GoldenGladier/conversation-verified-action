@@ -10,6 +10,11 @@ venv/
 .env.*
 !.env.example
 
+# Google Calendar service account
+credentials.json
+*-credentials.json
+token.json
+
 # Node
 node_modules/
 .next/
@@ -19,6 +24,9 @@ dist/
 # IDE
 .vscode/
 .idea/
+
+# Local Cursor rules/skills (personal owner split, not for the teammate)
+.cursor/
 
 # OS
 .DS_Store
