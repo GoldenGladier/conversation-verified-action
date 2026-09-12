@@ -12,6 +12,7 @@ venv/
 
 # Google Calendar service account
 credentials.json
+backend/credentials.json
 *-credentials.json
 token.json
 
