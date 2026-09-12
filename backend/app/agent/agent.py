@@ -28,8 +28,9 @@ class Agent:
         self,
         doctor_user_id: int | None = None,
         patient_user_id: int | None = None,
+        calendar: CalendarTool | None = None,
     ):
-        self.calendar = CalendarTool()
+        self.calendar = calendar or CalendarTool()
         self.verification = VerificationService()
         self.action_executor = ActionExecutor(self.calendar)
         self.intent_detector = IntentDetector()
@@ -369,10 +370,7 @@ class Agent:
         )
 
         return AgentResponse(
-            message=(
-                "Cita autorizada por el doctor. "
-                "La ejecucion de la cita se conectara en la siguiente etapa."
-            ),
+            message=self.action_executor.execute(request),
             verification_id=request.id,
         )
 

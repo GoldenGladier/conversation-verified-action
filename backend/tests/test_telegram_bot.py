@@ -1,15 +1,27 @@
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from app.agent.agent import Agent, AgentResponse
-from app.telegram import bot
 from app.verification.verification_service import VerificationAction
 
 
 DOCTOR_USER_ID = 101
 PATIENT_USER_ID = 202
 VERIFICATION_ID = "verification-id"
+
+
+class FakeCalendar:
+
+    def get_available_slots(self, *args, **kwargs):
+        return []
+
+    def create_event(self, *args, **kwargs):
+        raise AssertionError("CalendarTool should be mocked in these tests")
+
+
+with patch("app.agent.agent.CalendarTool", FakeCalendar):
+    from app.telegram import bot
 
 
 class FailingApprovalAgent:
@@ -44,6 +56,7 @@ def make_patient_confirmed_agent():
     callback_agent = Agent(
         doctor_user_id=DOCTOR_USER_ID,
         patient_user_id=PATIENT_USER_ID,
+        calendar=FakeCalendar(),
     )
     request = callback_agent.verification.create_request(
         action=VerificationAction.CREATE_CALENDAR_EVENT,

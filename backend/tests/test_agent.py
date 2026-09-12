@@ -1,5 +1,7 @@
 from datetime import date, time
 
+import pytest
+
 from app.agent.action_intent import ActionIntent
 from app.agent.agent import Agent
 from app.agent.patient_confirmation_intent import PatientProposalResponse
@@ -21,6 +23,15 @@ class FakeIntentDetector:
             start_time=time(10, 0),
             duration_minutes=30,
         )
+
+
+class FakeCalendar:
+
+    def get_available_slots(self, *args, **kwargs):
+        return []
+
+    def create_event(self, *args, **kwargs):
+        raise AssertionError("CalendarTool should be mocked in these tests")
 
 
 class FakePatientConfirmationDetector:
@@ -49,6 +60,7 @@ def make_agent(
     agent = Agent(
         doctor_user_id=doctor_user_id,
         patient_user_id=patient_user_id,
+        calendar=FakeCalendar(),
     )
     agent.intent_detector = FakeIntentDetector()
     return agent
@@ -333,7 +345,7 @@ def test_confirmation_detector_receives_limited_recent_messages():
     assert recent_messages[-1].message == "Sí"
 
 
-def test_agent_approves_with_telegram_actor_without_executing_action(
+def test_agent_approves_with_telegram_actor_and_executes_action(
     monkeypatch,
 ):
     agent = make_agent(DOCTOR_USER_ID, PATIENT_USER_ID)
@@ -344,10 +356,13 @@ def test_agent_approves_with_telegram_actor_without_executing_action(
         "telegram_conversation",
     )
 
-    def unexpected_execution(*args, **kwargs):
-        raise AssertionError("ActionExecutor must not run")
+    executed_requests = []
 
-    monkeypatch.setattr(agent.action_executor, "execute", unexpected_execution)
+    def record_execution(executed_request):
+        executed_requests.append(executed_request)
+        return "Cita creada. Abrir en Calendar: https://calendar.test/event"
+
+    monkeypatch.setattr(agent.action_executor, "execute", record_execution)
 
     response = agent.approve_verification(request.id, DOCTOR_USER_ID)
 
@@ -355,6 +370,98 @@ def test_agent_approves_with_telegram_actor_without_executing_action(
     assert request.doctor_approved_by == DOCTOR_USER_ID
     assert request.doctor_approval_source == "telegram_callback"
     assert response.verification_id == request.id
+    assert response.message == (
+        "Cita creada. Abrir en Calendar: https://calendar.test/event"
+    )
+    assert executed_requests == [request]
+
+
+def test_patient_cannot_approve_or_execute_action(monkeypatch):
+    agent = make_agent(DOCTOR_USER_ID, PATIENT_USER_ID)
+    request = create_telegram_proposal(agent)
+    agent.verification.record_patient_confirmation(
+        request.id,
+        PATIENT_USER_ID,
+        "telegram_conversation",
+    )
+    executed = False
+
+    def record_execution(*args, **kwargs):
+        nonlocal executed
+        executed = True
+
+    monkeypatch.setattr(agent.action_executor, "execute", record_execution)
+
+    with pytest.raises(ValueError, match="assigned doctor"):
+        agent.approve_verification(request.id, PATIENT_USER_ID)
+
+    assert request.status.value == "patient_confirmed"
+    assert not executed
+
+
+def test_approval_before_patient_confirmation_does_not_execute_action(
+    monkeypatch,
+):
+    agent = make_agent(DOCTOR_USER_ID, PATIENT_USER_ID)
+    request = create_telegram_proposal(agent)
+    executed = False
+
+    def record_execution(*args, **kwargs):
+        nonlocal executed
+        executed = True
+
+    monkeypatch.setattr(agent.action_executor, "execute", record_execution)
+
+    with pytest.raises(ValueError, match="patient confirmed"):
+        agent.approve_verification(request.id, DOCTOR_USER_ID)
+
+    assert request.status.value == "proposed"
+    assert not executed
+
+
+def test_calendar_failure_does_not_return_a_success_response(monkeypatch):
+    agent = make_agent(DOCTOR_USER_ID, PATIENT_USER_ID)
+    request = create_telegram_proposal(agent)
+    agent.verification.record_patient_confirmation(
+        request.id,
+        PATIENT_USER_ID,
+        "telegram_conversation",
+    )
+
+    def fail_execution(*args, **kwargs):
+        raise ValueError("Could not create calendar event")
+
+    monkeypatch.setattr(agent.action_executor, "execute", fail_execution)
+
+    with pytest.raises(ValueError, match="Could not create calendar event"):
+        agent.approve_verification(request.id, DOCTOR_USER_ID)
+
+    assert request.status.value == "approved"
+
+
+def test_duplicate_approval_executes_action_only_once(monkeypatch):
+    agent = make_agent(DOCTOR_USER_ID, PATIENT_USER_ID)
+    request = create_telegram_proposal(agent)
+    agent.verification.record_patient_confirmation(
+        request.id,
+        PATIENT_USER_ID,
+        "telegram_conversation",
+    )
+    executions = 0
+
+    def record_execution(*args, **kwargs):
+        nonlocal executions
+        executions += 1
+        return "Cita creada"
+
+    monkeypatch.setattr(agent.action_executor, "execute", record_execution)
+
+    agent.approve_verification(request.id, DOCTOR_USER_ID)
+
+    with pytest.raises(ValueError, match="patient confirmed"):
+        agent.approve_verification(request.id, DOCTOR_USER_ID)
+
+    assert executions == 1
 
 
 def test_agent_doctor_rejects_with_telegram_actor_and_default_source():
